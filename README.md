@@ -32,7 +32,7 @@ cd subsurface
 pip install -e .
 ```
 
-**Requirements:** Python ≥ 3.8, numpy ≥ 1.24, scipy ≥ 1.10, matplotlib ≥ 3.7
+**Requirements:** Python ≥ 3.8, numpy ≥ 1.24, scipy ≥ 1.10, matplotlib ≥ 3.7, cvxpy ≥ 1.4
 
 ---
 
@@ -89,6 +89,9 @@ n2bio/
 │   ├── state.py            BiologicalState dataclass (full ODE state vector)
 │   ├── lifecycle.py        Lifecycle phase classifier (Phase 0–4)
 │   └── solver.py           N2BioBatchSolver — stiff BDF ODE integration
+├── fba/
+│   ├── manifold_fba.py     Matrix manifold FBA core (Grassmann · Stiefel · SPD)
+│   └── bridge.py           BiologicalState → CommunityState unit-conversion bridge
 └── verification/
     ├── stage1_thermo.py    PR EOS density, viscosity, and N₂ solubility benchmarks
     ├── stage2_flow.py      Multiphase flow and IFDM grid verification
@@ -126,6 +129,88 @@ The coupled N₂-fixation / HC-fermentation system passes through five phases in
 | NaCl | Aqueous/solid | Salinity; Setschenow salting-out of gases |
 
 Primary variable vector: `[P, X_NaCl, Z_N₂, Z_CO₂, Z_H₂, Z_NH₃, C_HC_ali, C_HC_arom, T]`
+
+---
+
+## Matrix Manifold FBA (`n2bio.fba`)
+
+The `fba` subpackage adds constraint-based stoichiometric modelling of the full
+four-guild consortium on three Riemannian manifolds, complementing the kinetic
+ODE model with steady-state flux analysis.
+
+### Geometric enhancements over standard LP-FBA
+
+| Manifold | Role |
+|---|---|
+| **Grassmann Gr(k, n)** | Each guild's null space is a point on Gr(k, n). Geodesic distance between guilds quantifies metabolic complementarity. The lifecycle trajectory is a geodesic path across phases. |
+| **Stiefel V_{n,k}** | Orthonormal null-space bases live on V_{n,k}. Riemannian gradient descent stays in null(S) exactly — no LP re-projection needed. |
+| **SPD Sym⁺(n)** | Flux covariance lives on Sym⁺(n). Fisher-Rao metric enables principled cross-guild comparison and anisotropic sampling. |
+
+### Guilds and exchange metabolites
+
+| Guild | Chassis | Primary reaction |
+|---|---|---|
+| 0 Diazotroph | *Thermotoga* | N₂ fixation + dark fermentation |
+| 1 Hydrogenotroph | Methanogen | H₂ + CO₂ → CH₄ |
+| 2 SRB | Sulfate reducer | H₂/HC + SO₄²⁻ → H₂S |
+| 3 Aromatic degrader | HC degrader | HC_arom detoxification |
+
+Exchange pool (9 shared metabolites): N₂_aq, NH₄, H₂_aq, CO₂_aq, HC_ali, SO₄, H₂S, HC_arom, CH₄.
+
+### Quick start — standalone FBA
+
+```python
+import numpy as np
+from n2bio.fba import CommunityState, run_community_fba, lifecycle_scan
+
+# Single phase (Phase 2 — peak production)
+state = CommunityState(
+    biomass_fractions=np.array([0.55, 0.20, 0.15, 0.10]),
+    NH4_conc=2.0, SO4_conc=1.0,
+    H2_partial_pressure=0.20, HC_arom_conc=0.25,
+    lifecycle_phase=2,
+)
+result = run_community_fba(state, use_manifold=True)
+
+from n2bio.fba import print_community_report
+print_community_report(result, state)
+
+# Full lifecycle scan (Phases 0 → 4)
+scan = lifecycle_scan(n_phases=5, use_manifold=True)
+from n2bio.fba import print_lifecycle_summary
+print_lifecycle_summary(scan)
+```
+
+### Bridge from kinetic simulation
+
+```python
+from n2bio import N2BioSimulation
+from n2bio.fba import run_community_fba
+from n2bio.fba.bridge import state_to_community
+
+sim = N2BioSimulation.default_batch()
+sol, phases = sim.run(t_end_hours=3000)
+
+# Find first Phase-2 snapshot and run FBA on it
+idx = next(i for i, p in enumerate(phases) if int(p) == 2)
+from n2bio.simulation.state import BiologicalState
+bio = BiologicalState.from_array(sol.y[:, idx], sim.conditions)
+community_state = state_to_community(bio, lifecycle_phase=2, SO4_conc_mM=1.0)
+result = run_community_fba(community_state)
+```
+
+### N-S coupling in the FBA layer
+
+`_exchange_bounds_from_state` encodes the same N–S competition that drives the
+kinetic model:
+
+```
+# Diazotroph: nitrogenase flux capped by H₂ and HC_arom inhibition
+nit_max = 10 × K_I_H₂/(K_I_H₂ + P_H₂) × K_I_arom/(K_I_arom + [HC_arom])
+
+# SRB: dissimilatory SO₄ pool reduced as NH₄ drives OAS synthesis
+SO₄_available = SO₄_total × (1 − 0.65 × NH₄/(K_OAS + NH₄))
+```
 
 ---
 

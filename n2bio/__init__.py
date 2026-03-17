@@ -35,9 +35,10 @@ n2bio.geochemistry      – NH₃/NH₄⁺ speciation
 n2bio.transport         – IFDM grid, multiphase Darcy flow
 n2bio.simulation        – BiologicalState, lifecycle, ODE solver
 n2bio.verification      – Verification test suites (stages 1, 3, 4)
+n2bio.fba               – Matrix manifold FBA (Grassmann · Stiefel · SPD)
 """
 
-__version__ = "1.0.0"
+__version__ = "2.1.0"
 __author__  = "N2Bio Development Team"
 
 # ---- Core component system ----
@@ -57,6 +58,16 @@ from .thermophysics.solubility import N2Solubility, CO2Solubility, H2Solubility
 from .geochemistry.speciation import NH3Speciation
 from .transport.grid import IFDMGrid1D
 from .transport.flow import MultiphaseFlow1D
+
+# ---- Manifold FBA ----
+from .fba import (
+    CommunityState,
+    CommunityFBAResult,
+    FBAResult as GuildFBAResult,
+    run_community_fba,
+    lifecycle_scan as fba_lifecycle_scan,
+    state_to_community,
+)
 
 
 class N2BioSimulation:
@@ -181,4 +192,11 @@ __all__ = [
     "NH3Speciation",
     "IFDMGrid1D",
     "MultiphaseFlow1D",
+    # Manifold FBA
+    "CommunityState",
+    "CommunityFBAResult",
+    "GuildFBAResult",
+    "run_community_fba",
+    "fba_lifecycle_scan",
+    "state_to_community",
 ]

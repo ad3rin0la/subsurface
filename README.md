@@ -233,10 +233,6 @@ python examples/reservoir_1d.py --plot
 - Foght, J. (2010). In *Handbook of Hydrocarbon and Lipid Microbiology*, pp. 1661–1668. Springer.
 - Pradhan, N. et al. (2021). *Bioresource Technology* 332, 125127.
 
-**Synthetic biology chassis:**
-- Mehta, M.P. & Baross, J.A. (2006). Nitrogen fixation at 92°C. *Science* 314, 1783–1786.
-- Lie, T.J. et al. (2022). *Microbiology Spectrum* 10(1), e02093-21.
-- Han, D., Norris, S.M. & Xu, Z. (2012). *BMC Biotechnology* 12, 2.
 
 **Thermophysical:**
 - Peng, D.-Y. & Robinson, D.B. (1976). *Ind. Eng. Chem. Fundam.* 15, 59–64.

@@ -44,6 +44,22 @@ dev = [
     "pytest>=7.0",
     "pytest-cov",
 ]
+gui = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+]
+io = [
+    "openpyxl>=3.1",
+    "pyyaml>=6.0",
+]
+all = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+    "openpyxl>=3.1",
+    "pyyaml>=6.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

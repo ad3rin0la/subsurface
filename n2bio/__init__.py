@@ -36,9 +36,10 @@ n2bio.transport         – IFDM grid, multiphase Darcy flow
 n2bio.simulation        – BiologicalState, lifecycle, ODE solver
 n2bio.verification      – Verification test suites (stages 1, 3, 4)
 n2bio.fba               – Matrix manifold FBA (Grassmann · Stiefel · SPD)
+n2bio.io                – Field data I/O (CSV, LAS, JSON, Excel, YAML → ReservoirConditions)
 """
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 __author__  = "N2Bio Development Team"
 
 # ---- Core component system ----
@@ -170,6 +171,18 @@ class N2BioSimulation:
                 f"mu_max={self.params.mu_max} h⁻¹)")
 
 
+# ---- Field data I/O ----
+from .io import (
+    ConditionsBuilder,
+    load_field_data,
+    parse_csv,
+    parse_excel,
+    parse_las,
+    parse_json,
+    parse_yaml,
+    convert_record,
+)
+
 __all__ = [
     # Main entry point
     "N2BioSimulation",
@@ -199,4 +212,13 @@ __all__ = [
     "run_community_fba",
     "fba_lifecycle_scan",
     "state_to_community",
+    # Field data I/O
+    "ConditionsBuilder",
+    "load_field_data",
+    "parse_csv",
+    "parse_excel",
+    "parse_las",
+    "parse_json",
+    "parse_yaml",
+    "convert_record",
 ]

@@ -84,6 +84,15 @@ class BiologicalState:
     cum_NH4: float = 0.0
     time:    float = 0.0   # hours
 
+    # ---- Sulfur assimilation intermediates (mol/L) ----
+    # Coupling 1: H₂S as direct OASTL substrate (bypasses APR/SiR chain)
+    # Coupling 2: Acetate as acetyl-CoA donor to SAT (closes fermentation loop)
+    # Coupling 3: Cysteine as structural requirement for nitrogenase Fe-S clusters
+    H2S_aq:     float = 0.0     # total dissolved sulfide (H₂S + HS⁻) [mol/L]
+    Acetate_aq: float = 0.0     # free acetate [mol/L]
+    OAS_aq:     float = 0.0     # O-acetylserine (SAT product, OASTL substrate) [mol/L]
+    Cys_aq:     float = 1.0e-5  # L-cysteine [mol/L] — small non-zero default avoids cold-start Cys starvation
+
     # ------------------------------------------------------------------
     # Derived properties
     # ------------------------------------------------------------------
@@ -139,11 +148,22 @@ class BiologicalState:
         """
         Return the ODE state vector as a numpy array.
 
-        Order: [N2_aq, H2_aq, NH4_aq, HC_ali, HC_arom, X, cum_H2]
+        Order (11 elements):
+            [0]  N2_aq     [mol/L]
+            [1]  H2_aq     [mol/L]
+            [2]  NH4_aq    [mol/L]
+            [3]  HC_ali    [mol/L]
+            [4]  HC_arom   [mol/L]
+            [5]  X         [g VSS/L]
+            [6]  cum_H2    [mol/L]
+            [7]  H2S_aq    [mol/L]
+            [8]  Acetate_aq[mol/L]
+            [9]  OAS_aq    [mol/L]
+            [10] Cys_aq    [mol/L]
 
         Returns
         -------
-        np.ndarray  State vector of length 7.
+        np.ndarray  State vector of length 11.
         """
         return np.array([
             self.N2_aq,
@@ -153,6 +173,10 @@ class BiologicalState:
             self.HC_arom,
             self.X,
             self.cum_H2,
+            self.H2S_aq,
+            self.Acetate_aq,
+            self.OAS_aq,
+            self.Cys_aq,
         ])
 
     @classmethod
@@ -160,13 +184,14 @@ class BiologicalState:
         """
         Reconstruct a BiologicalState from an ODE solution array.
 
-        Non-ODE fields (CO2_aq, NaCl_aq, pressures, T, pH) are copied
-        from the template state.
+        Accepts both the legacy 7-element vector (indices 0–6) and the
+        extended 11-element vector (indices 0–10).  Non-ODE fields
+        (CO2_aq, NaCl_aq, pressures, T, pH) are copied from template.
 
         Parameters
         ----------
         y : np.ndarray
-            State vector [N2_aq, H2_aq, NH4_aq, HC_ali, HC_arom, X, cum_H2].
+            State vector of length 7 or 11.
         template : BiologicalState
             Reference state for non-integrated variables.
 
@@ -174,22 +199,27 @@ class BiologicalState:
         -------
         BiologicalState
         """
+        n = len(y)
         return cls(
-            N2_aq   = max(float(y[0]), 0.0),
-            CO2_aq  = template.CO2_aq,
-            H2_aq   = max(float(y[1]), 0.0),
-            NH4_aq  = max(float(y[2]), 0.0),
-            HC_ali  = max(float(y[3]), 0.0),
-            HC_arom = max(float(y[4]), 0.0),
-            NaCl_aq = template.NaCl_aq,
-            X       = max(float(y[5]), 0.0),
-            P_N2    = template.P_N2,
-            P_CO2   = template.P_CO2,
-            P_H2    = max(float(y[1]) * 10.0, 0.0),   # rough equilibrium estimate
-            P_total = template.P_total,
-            T       = template.T,
-            pH      = template.pH,
-            cum_H2  = float(y[6]),
+            N2_aq      = max(float(y[0]), 0.0),
+            CO2_aq     = template.CO2_aq,
+            H2_aq      = max(float(y[1]), 0.0),
+            NH4_aq     = max(float(y[2]), 0.0),
+            HC_ali     = max(float(y[3]), 0.0),
+            HC_arom    = max(float(y[4]), 0.0),
+            NaCl_aq    = template.NaCl_aq,
+            X          = max(float(y[5]), 0.0),
+            P_N2       = template.P_N2,
+            P_CO2      = template.P_CO2,
+            P_H2       = max(float(y[1]) * 10.0, 0.0),
+            P_total    = template.P_total,
+            T          = template.T,
+            pH         = template.pH,
+            cum_H2     = float(y[6]),
+            H2S_aq     = max(float(y[7]),  0.0) if n > 7  else template.H2S_aq,
+            Acetate_aq = max(float(y[8]),  0.0) if n > 8  else template.Acetate_aq,
+            OAS_aq     = max(float(y[9]),  0.0) if n > 9  else template.OAS_aq,
+            Cys_aq     = max(float(y[10]), 0.0) if n > 10 else template.Cys_aq,
         )
 
     def copy(self) -> 'BiologicalState':
@@ -205,6 +235,8 @@ class BiologicalState:
             f"  NH4_aq={self.NH4_aq*1e3:.4f} mmol/L\n"
             f"  HC_ali={self.HC_ali*1e3:.4f} mmol/L, HC_arom={self.HC_arom*1e3:.4f} mmol/L\n"
             f"  f_arom={self.f_arom:.3f}, X={self.X*1e3:.2f} mg VSS/L\n"
+            f"  H2S_aq={self.H2S_aq*1e6:.2f} μmol/L, Cys_aq={self.Cys_aq*1e6:.2f} μmol/L\n"
+            f"  Acetate_aq={self.Acetate_aq*1e3:.4f} mmol/L, OAS_aq={self.OAS_aq*1e6:.2f} μmol/L\n"
             f"  cum_H2={self.cum_H2*1e3:.4f} mmol/L, time={self.time:.1f} h"
             f"\n)"
         )

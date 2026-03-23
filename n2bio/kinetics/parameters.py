@@ -80,6 +80,55 @@ class KineticParameters:
     K_N_fixed: float = 5.0e-6     # mol/L
     Y_N: float = 0.14             # g N / g VSS
 
+    # ---- Sulfur assimilation: SAT / OASTL pathway ----
+    # SAT (serine acetyltransferase): serine + acetyl-CoA → OAS + CoA
+    r_SAT_max: float = 2.0e-3     # mol OAS / g VSS / h
+    K_Ac_SAT: float = 5.0e-4      # mol/L  acetate (acetyl-CoA proxy) half-sat for SAT
+    K_I_Cys_SAT: float = 1.0e-3   # mol/L  cysteine allosteric feedback on SAT
+    K_OAS_SAT: float = 1.0e-4     # mol/L  OAS half-sat (minor back-constraint)
+
+    # OASTL (O-acetylserine thiol-lyase): OAS + H₂S → Cys + acetate
+    r_OASTL_max: float = 5.0e-3   # mol Cys / g VSS / h
+    K_OAS_OASTL: float = 5.0e-5   # mol/L  OAS half-sat for OASTL
+    K_H2S_OASTL: float = 3.0e-5   # mol/L  dissolved sulfide half-sat for OASTL
+    pKa_H2S: float = 7.0          # pKa of H₂S/HS⁻ at 80 °C (slightly < 25 °C value of 7.05)
+
+    # Fe-S cluster maintenance drain on Cys (continuous turnover in nitrogenase)
+    r_FeS_maintenance: float = 5.0e-5  # mol Cys / g VSS / h
+
+    # Cys co-limitation of nitrogenase (Fe-S cluster assembly requirement)
+    K_Cys_nit: float = 2.0e-5    # mol/L  (20 μM) — half-sat for Cys on nitrogenase
+
+    # ---- Acetate mass balance (fermentation coproduct) ----
+    Y_acetate: float = 0.01       # mol acetate / g COD  (≈ 2 mol/mol hexose ÷ 192 g COD/mol)
+    Y_S: float = 0.010            # g S / g VSS  — sulfur content of biomass
+
+    # ---- H₂S transport ----
+    k_strip_H2S: float = 0.05     # h⁻¹  — dissolved H₂S gas-phase stripping
+    H2S_source: float = 0.0       # mol/L/h — geological/SRB H₂S source (boundary)
+
+    # ---- Buoyancy / gravitational segregation ----
+    # f_buoyancy_seg: fraction of bulk gas-cap P(H₂) that the biofilm "sees" at
+    # the injection front.  Arises because biogenic H₂ (M = 2 g/mol) is ~14×
+    # less dense than N₂ (M = 28 g/mol) and migrates buoyantly to the structural
+    # high of the anticline, while the microbial biofilm colonises the deeper
+    # pore space near the injector.  The local gas phase near the biofilm is
+    # therefore dominated by the injected N₂ cushion, with a P(H₂) substantially
+    # below the reservoir-average gas-cap value.
+    #
+    # f_buoyancy_seg = 1.0  →  well-mixed assumption (legacy, conservative)
+    # f_buoyancy_seg = 0.1  →  strong segregation; biofilm sees ~10% of bulk P(H₂)
+    #
+    # Calibration guidance:
+    #   Gravity number Γ for H₂/N₂ systems is ~7% higher than CH₄/N₂ UGS,
+    #   and ~3× higher than CO₂ storage (Luboń & Tarkowski 2021).  Field-scale
+    #   reservoir simulations of UHS with N₂ cushion gas show H₂ saturation
+    #   near-zero at the injector and near-maximum at the structural crest
+    #   (Hagemann et al. 2015, Muhammed et al. 2022).  A value of 0.05–0.20
+    #   is physically reasonable for a well-designed anticline with dedicated
+    #   injector/producer wells.
+    f_buoyancy_seg: float = 1.0   # [-]  default: well-mixed (no correction)
+
     def __post_init__(self):
         """Validate parameter ranges."""
         if self.mu_max <= 0:
@@ -92,27 +141,38 @@ class KineticParameters:
             raise ValueError(f"f_arom0 must be in [0,1], got {self.f_arom0}")
         if self.K_I_H2 <= 0:
             raise ValueError(f"K_I_H2 must be positive, got {self.K_I_H2}")
+        if not 0.0 <= self.f_buoyancy_seg <= 1.0:
+            raise ValueError(f"f_buoyancy_seg must be in [0,1], got {self.f_buoyancy_seg}")
 
     def summary(self) -> str:
         """Return a human-readable summary of kinetic parameters."""
         lines = [
             "KineticParameters Summary",
             "=" * 40,
-            f"  μ_max       = {self.mu_max:.4f} h⁻¹",
-            f"  K_N2        = {self.K_N2*1e6:.1f} μmol/L",
-            f"  K_S         = {self.K_S*1e3:.3f} mmol/L",
-            f"  Y           = {self.Y:.3f} g VSS/g COD",
-            f"  b_decay     = {self.b_decay:.4f} h⁻¹",
-            f"  K_I_H2      = {self.K_I_H2:.3f} atm",
-            f"  K_I_NH4     = {self.K_I_NH4*1e3:.1f} mmol/L",
-            f"  r_nit_max   = {self.r_nit_max:.2f} mol N₂/g VSS/h",
-            f"  k_ali       = {self.k_ali:.3e} h⁻¹",
-            f"  k_arom      = {self.k_arom:.3e} h⁻¹",
-            f"  K_I_arom    = {self.K_I_arom*1e3:.3f} mmol/L",
-            f"  f_arom0     = {self.f_arom0:.2f}",
-            f"  Y_HC_H2     = {self.Y_HC_H2:.3f} mol H₂/g COD",
-            f"  K_N_fixed   = {self.K_N_fixed*1e6:.2f} μmol/L",
-            f"  Y_N         = {self.Y_N:.3f} g N/g VSS",
+            f"  μ_max            = {self.mu_max:.4f} h⁻¹",
+            f"  K_N2             = {self.K_N2*1e6:.1f} μmol/L",
+            f"  K_S              = {self.K_S*1e3:.3f} mmol/L",
+            f"  Y                = {self.Y:.3f} g VSS/g COD",
+            f"  b_decay          = {self.b_decay:.4f} h⁻¹",
+            f"  K_I_H2           = {self.K_I_H2:.3f} atm",
+            f"  K_I_NH4          = {self.K_I_NH4*1e3:.1f} mmol/L",
+            f"  r_nit_max        = {self.r_nit_max:.2f} mol N₂/g VSS/h",
+            f"  K_Cys_nit        = {self.K_Cys_nit*1e6:.1f} μmol/L",
+            f"  k_ali            = {self.k_ali:.3e} h⁻¹",
+            f"  k_arom           = {self.k_arom:.3e} h⁻¹",
+            f"  K_I_arom         = {self.K_I_arom*1e3:.3f} mmol/L",
+            f"  f_arom0          = {self.f_arom0:.2f}",
+            f"  Y_HC_H2          = {self.Y_HC_H2:.3f} mol H₂/g COD",
+            f"  Y_acetate        = {self.Y_acetate:.4f} mol acetate/g COD",
+            f"  K_N_fixed        = {self.K_N_fixed*1e6:.2f} μmol/L",
+            f"  Y_N              = {self.Y_N:.3f} g N/g VSS",
+            f"  Y_S              = {self.Y_S:.3f} g S/g VSS",
+            f"  r_SAT_max        = {self.r_SAT_max:.2e} mol OAS/g VSS/h",
+            f"  r_OASTL_max      = {self.r_OASTL_max:.2e} mol Cys/g VSS/h",
+            f"  r_FeS_maint      = {self.r_FeS_maintenance:.2e} mol Cys/g VSS/h",
+            f"  k_strip_H2S      = {self.k_strip_H2S:.3f} h⁻¹",
+            f"  H2S_source       = {self.H2S_source:.2e} mol/L/h",
+            f"  f_buoyancy_seg   = {self.f_buoyancy_seg:.3f}  (buoyancy/gravitational segregation factor)",
         ]
         return "\n".join(lines)
 

@@ -63,8 +63,9 @@ EXCHANGE_METABOLITES: Dict[str, int] = {
     "H2S":     6,
     "HC_arom": 7,
     "CH4":     8,
+    "acetate": 9,   # fermentation coproduct; acetyl-CoA donor to SAT
 }
-N_EXCH = len(EXCHANGE_METABOLITES)   # 9
+N_EXCH = len(EXCHANGE_METABOLITES)   # 10
 GUILD_NAMES = ["Diazotroph", "Hydrogenotroph", "SRB", "AromaticDegrader"]
 
 
@@ -79,7 +80,7 @@ class GuildModel:
 
     Row layout of S:
       rows 0 .. n_internal-1   = intracellular metabolites
-      rows n_internal .. end   = exchange metabolites (N_EXCH = 9)
+      rows n_internal .. end   = exchange metabolites (N_EXCH = 10)
 
     Null-space design principle
     ---------------------------
@@ -127,31 +128,49 @@ def _ex(n_internal: int, name: str) -> int:
 
 def build_diazotroph_model() -> GuildModel:
     """
-    Diazotroph  (Thermotoga chassis).
+    Diazotroph  (Thermotoga chassis)  — updated with three N–S couplings.
 
-    Internal metabolites (1):
-      PYR — pyruvate  (central C3 intermediate)
+    Internal metabolites (3):
+      PYR — pyruvate         (central C3 intermediate)
+      OAS — O-acetylserine   (SAT product; OASTL substrate)
+      CYS — L-cysteine       (nitrogenase Fe-S supply; structural S)
 
-    Reactions (7):
-      r0: N2_aq → 2 NH4 + H2          nitrogenase (direct exchange)
-      r1: HC_ali → 2 PYR               glycolysis-like
-      r2: PYR → H2 + CO2               pyruvate:ferredoxin oxidoreductase (PFOR)
-      r3: HC_ali → H2 + CO2            direct fermentation  ← PARALLEL to r1+r2
-      r4: PYR → biomass  (objective)   anabolic pyruvate use
-      r5: NH4 → (biomass-N drain)      N-assimilation sink
-      r6: N2_aq → NH4                  abiotic dissolution / alternative path
+    Reactions (10):
+      r0: N2_aq → 2 NH4 + H2            nitrogenase (Cys co-limited via exchange bounds)
+      r1: HC_ali → 2 PYR                 glycolysis-like
+      r2: PYR → H2 + CO2 + acetate       PFOR + acetate kinase (acetate coproduct)
+      r3: HC_ali → H2 + CO2 + acetate    direct fermentation ← PARALLEL to r1+r2
+      r4: PYR + NH4 → biomass (obj)      anabolic pyruvate use
+      r5: NH4 → (biomass-N drain)        N-assimilation sink
+      r6: N2_aq → NH4                    alternative N₂ fixation (parallel to r0)
+      r7: NH4 + acetate → OAS            SAT  (acetate = acetyl-CoA proxy)
+      r8: OAS + H2S → CYS + acetate      OASTL  (H₂S bypass of APR/SiR chain)
+      r9: CYS →                          Cys drain  (nitrogenase Fe-S + structural)
 
-    Null space:  r1+r2 and r3 are parallel routes (HC_ali → H2+CO2).
-    Also r0 and r6 are parallel (N2 → NH4 with/without H2 co-product).
-    null_dim = 7 - rank >= 2.
+    Null-space structure:
+      r1+r2 ‖ r3  (HC_ali → H2 + CO2 + acetate)   — 1 null vector
+      r0 ‖ r6     (N2 → NH4 with/without H2)        — 1 null vector
+      r7+r8 cycle (acetate recycling in SAT/OASTL)  — 1 null vector
+      null_dim ≥ 3.
+
+    Biochemical basis of new reactions:
+      r2:  PYR + CoA + Fd_ox → acetyl-CoA + CO2 + H2 (PFOR),
+           acetyl-CoA → acetate (phosphotransacetylase/AK) → net: PYR → acetate + CO2 + H2
+      r7:  L-serine + acetyl-CoA → OAS + CoA
+           (acetate is the dissolved proxy for intracellular acetyl-CoA via ACS)
+      r8:  OAS + HS⁻ → Cys + acetate + H⁺
+           (H₂S from exchange pool; bypasses SO₄²⁻ reductive chain)
+      r9:  Cys → (structural protein S + nitrogenase Fe-S cluster turnover)
     """
-    n_int = 1
-    n_rxn = 7
+    n_int = 3
+    n_rxn = 10
     S = np.zeros((n_int + N_EXCH, n_rxn))
     PYR = 0
-    ex = lambda name: _ex(n_int, name)
+    OAS = 1
+    CYS = 2
+    ex  = lambda name: _ex(n_int, name)
 
-    # r0: nitrogenase
+    # r0: nitrogenase  N2 → 2 NH4 + H2
     S[ex("N2_aq"), 0] = -1.0
     S[ex("NH4"),   0] = +2.0
     S[ex("H2_aq"), 0] = +1.0
@@ -160,15 +179,17 @@ def build_diazotroph_model() -> GuildModel:
     S[ex("HC_ali"), 1] = -1.0
     S[PYR,          1] = +2.0
 
-    # r2: PFOR  PYR → H2 + CO2
-    S[PYR,           2] = -1.0
-    S[ex("H2_aq"),   2] = +1.0
-    S[ex("CO2_aq"),  2] = +1.0
+    # r2: PFOR + AK  PYR → H2 + CO2 + acetate
+    S[PYR,            2] = -1.0
+    S[ex("H2_aq"),    2] = +1.0
+    S[ex("CO2_aq"),   2] = +1.0
+    S[ex("acetate"),  2] = +1.0    # acetate coproduct from PFOR→acetyl-CoA→acetate
 
-    # r3: direct fermentation  HC_ali → H2 + CO2  (parallel to r1+r2)
-    S[ex("HC_ali"),  3] = -0.5
-    S[ex("H2_aq"),   3] = +1.0
-    S[ex("CO2_aq"),  3] = +0.5
+    # r3: direct fermentation  HC_ali → H2 + CO2 + acetate  (parallel to r1+r2)
+    S[ex("HC_ali"),   3] = -0.5
+    S[ex("H2_aq"),    3] = +1.0
+    S[ex("CO2_aq"),   3] = +0.5
+    S[ex("acetate"),  3] = +0.5    # acetate coproduct
 
     # r4: biomass synthesis  PYR + NH4 → X  (objective)
     S[PYR,          4] = -0.5
@@ -177,12 +198,28 @@ def build_diazotroph_model() -> GuildModel:
     # r5: N-assimilation drain
     S[ex("NH4"),    5] = -0.1
 
-    # r6: alternative N2 fixation (no H2 stoichiometry — parallel to r0)
+    # r6: alternative N2 fixation (no H2 — parallel to r0)
     S[ex("N2_aq"),  6] = -0.5
     S[ex("NH4"),    6] = +1.0
 
+    # r7: SAT  NH4 + acetate → OAS
+    # (NH4 gates serine via GS/GOGAT; acetate is dissolved acetyl-CoA proxy)
+    S[ex("NH4"),      7] = -0.1    # N stoichiometry (1 N per serine/OAS)
+    S[ex("acetate"),  7] = -1.0    # acetyl-CoA consumed
+    S[OAS,            7] = +1.0
+
+    # r8: OASTL  OAS + H2S → CYS + acetate
+    # (H₂S drawn from exchange pool; pH-speciation handled in kinetic model)
+    S[OAS,            8] = -1.0
+    S[ex("H2S"),      8] = -1.0
+    S[CYS,            8] = +1.0
+    S[ex("acetate"),  8] = +1.0    # acetate released from OAS
+
+    # r9: Cys drain  CYS → (structural + Fe-S maintenance)
+    S[CYS,            9] = -1.0
+
     lb = np.zeros(n_rxn)
-    ub = np.array([10.0, 20.0, 20.0, 20.0, 5.0, 5.0, 5.0])
+    ub = np.array([10.0, 20.0, 20.0, 20.0, 5.0, 5.0, 5.0, 5.0, 5.0, 2.0])
     return GuildModel("Diazotroph", S, lb, ub,
                       biomass_reaction_idx=4, n_internal=n_int, guild_index=0)
 
@@ -678,6 +715,9 @@ class CommunityState:
     H2_partial_pressure: float = 0.01  # atm — nitrogenase inhibition
     HC_arom_conc: float = 0.15    # mmol/L — nitrogenase inhibition
     lifecycle_phase: int = 0
+    # New in v2.2: cysteine pool drives positive H₂S→Cys→nitrogenase feedback
+    Cys_conc_mM: float = 0.05     # mmol/L  — default ~2.5× K_Cys_nit (20 μM)
+    H2S_conc_mM: float = 0.0      # mmol/L  — reservoir dissolved sulfide
 
     def __post_init__(self):
         s = self.biomass_fractions.sum()
@@ -689,28 +729,41 @@ def _exchange_bounds_from_state(guild: GuildModel,
                                 state: CommunityState
                                 ) -> Dict[str, Tuple[float, float]]:
     """
-    Per-guild exchange bounds encoding N-S coupling (Hesse et al. 2004)
-    and N2Bio kinetic inhibitions.
+    Per-guild exchange bounds encoding N-S coupling and N2Bio inhibitions.
 
-    Key coupling
-    ------------
-    NH4 → OAS synthesis → SO4 assimilation competes with SRB dissimilation.
-    As NH4_conc rises (Phase 1→2), assimilatory SO4 demand increases across
-    all guilds, depleting the SO4 pool available for SRB dissimilation.
+    Three couplings modelled (v2.2 update):
+    ----------------------------------------
+    1. Nitrogenase (Diazotroph): upper bound on N2 uptake set by H₂ product
+       inhibition, aromatic HC inhibition, AND cysteine co-limitation.
+       In H₂S-rich reservoirs, Cys is supplied via OASTL, so the Cys factor
+       approaches 1 and the N₂ bound depends only on H₂ and aromatics.
+       In sulfide-poor formations, low Cys becomes the operative ceiling.
+
+    2. H₂S availability to Diazotroph: lower bound on H₂S consumption drives
+       OASTL flux; bounded by reservoir dissolved sulfide concentration.
+
+    3. SO₄²⁻ / SRB (unchanged): NH₄⁺ drives assimilatory SO₄ demand via
+       OAS pathway, depleting the pool available for SRB dissimilation.
     """
-    K_OAS  = 0.5   # NH4 half-sat for OAS / S-assimilation (mmol/L)
-    K_I_H2 = 0.3   # H2 inhibition of nitrogenase (atm)
-    K_I_ar = 0.5   # aromatic inhibition of nitrogenase (mmol/L)
+    K_OAS   = 0.5    # NH4 half-sat for OAS / S-assimilation (mmol/L)
+    K_I_H2  = 0.3    # H2 inhibition of nitrogenase (atm)
+    K_I_ar  = 0.5    # aromatic inhibition of nitrogenase (mmol/L)
+    K_Cys   = 0.020  # Cys half-sat for nitrogenase Fe-S (mmol/L = 20 μmol/L)
 
     bounds: Dict[str, Tuple[float, float]] = {}
 
     if guild.guild_index == 0:  # Diazotroph
-        # Nitrogenase upper bound suppressed by H2 and aromatic inhibition
-        h2_f  = K_I_H2 / (K_I_H2 + state.H2_partial_pressure)
-        ar_f  = K_I_ar / (K_I_ar + state.HC_arom_conc)
-        nit_max = 10.0 * h2_f * ar_f
-        # Constrain N2 consumption (negative = consumed)
+        # Factors on nitrogenase N2-uptake upper bound
+        h2_f  = K_I_H2 / (K_I_H2  + state.H2_partial_pressure)
+        ar_f  = K_I_ar  / (K_I_ar  + state.HC_arom_conc)
+        cys_f = state.Cys_conc_mM / (K_Cys + state.Cys_conc_mM)
+        nit_max = 10.0 * h2_f * ar_f * cys_f
         bounds["N2_aq"] = (-nit_max, 0.0)
+
+        # H₂S consumption by Diazotroph (for OASTL r8)
+        # Upper consumption bounded by available dissolved sulfide
+        h2s_max = min(state.H2S_conc_mM, 5.0)   # mmol/L, cap at 5
+        bounds["H2S"] = (-h2s_max, +np.inf)       # can consume or be indifferent
 
     elif guild.guild_index == 2:  # SRB
         # N-S coupling: NH4 drives assimilatory SO4 demand → reduces dissimilatory SO4
@@ -733,6 +786,7 @@ class CommunityFBAResult:
     community_NH4_flux: float
     community_CH4_flux: float
     community_H2S_flux: float
+    community_acetate_flux: float     # net acetate (fermentation - SAT uptake)
     grassmann_distances: np.ndarray   # (4, 4)  pairwise null-space geodesics
     null_dims: np.ndarray             # (4,)    per-guild null space dimensions
     null_bases: List[Optional[np.ndarray]]
@@ -771,10 +825,11 @@ def run_community_fba(state: CommunityState,
         row = guilds[gi].S_exchange[EXCHANGE_METABOLITES[met], :]
         return float(row @ results[gi].fluxes) * bf[gi]
 
-    H2_flux  = sum(net(i, "H2_aq")  for i in range(4))
-    NH4_flux = sum(net(i, "NH4")    for i in range(4))
-    CH4_flux = sum(net(i, "CH4")    for i in range(4))
-    H2S_flux = sum(net(i, "H2S")    for i in range(4))
+    H2_flux      = sum(net(i, "H2_aq")  for i in range(4))
+    NH4_flux     = sum(net(i, "NH4")    for i in range(4))
+    CH4_flux     = sum(net(i, "CH4")    for i in range(4))
+    H2S_flux     = sum(net(i, "H2S")    for i in range(4))
+    acetate_flux = sum(net(i, "acetate") for i in range(4))
 
     # -- Null bases in reaction space (from internal-row null space) --
     # Each guild has different n_rxn; we pad to max_rxn for cross-guild comparison.
@@ -845,6 +900,7 @@ def run_community_fba(state: CommunityState,
         community_NH4_flux=NH4_flux,
         community_CH4_flux=CH4_flux,
         community_H2S_flux=H2S_flux,
+        community_acetate_flux=acetate_flux,
         grassmann_distances=G_dist,
         null_dims=null_dims,
         null_bases=null_bases_rxn,
@@ -965,10 +1021,11 @@ def print_community_report(result: CommunityFBAResult,
               f"{r.objective:>8.4f}  {nd:>8}  {b:>6.3f}")
 
     print(f"\n  Community exchange fluxes (biomass-weighted, mmol/gVSS/h):")
-    print(f"    H₂  net  : {result.community_H2_flux:>+10.5f}")
-    print(f"    NH₄ net  : {result.community_NH4_flux:>+10.5f}")
-    print(f"    CH₄ net  : {result.community_CH4_flux:>+10.5f}")
-    print(f"    H₂S net  : {result.community_H2S_flux:>+10.5f}")
+    print(f"    H₂  net      : {result.community_H2_flux:>+10.5f}")
+    print(f"    NH₄ net      : {result.community_NH4_flux:>+10.5f}")
+    print(f"    CH₄ net      : {result.community_CH4_flux:>+10.5f}")
+    print(f"    H₂S net      : {result.community_H2S_flux:>+10.5f}")
+    print(f"    acetate net  : {result.community_acetate_flux:>+10.5f}  ← fermentation coproduct")
 
     G = result.grassmann_distances
     print(f"\n  Grassmann distances  (null-space geodesics in exchange space, rad):")

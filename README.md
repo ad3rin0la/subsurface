@@ -132,11 +132,76 @@ Primary variable vector: `[P, X_NaCl, Z_N₂, Z_CO₂, Z_H₂, Z_NH₃, C_HC_ali
 
 ---
 
-## Matrix Manifold FBA (`n2bio.fba`)
+## Metabolic and community FBA (`n2bio.fba`)
+
+The hand-built four-guild networks in `manifold_fba.py` are reduced teaching
+models. They are useful for lifecycle demonstrations and regression fixtures,
+but they are not genome-scale organism reconstructions.
+
+### SBML multi-organism models
+
+`community.py` loads and validates SBML-FBC models through COBRApy's
+`validate_sbml_model` pipeline, captures model metadata and grouped validation
+messages, namespaces each organism's intracellular network, and
+maps declared extracellular metabolites into one mass-balanced community pool.
+Source boundary reactions are replaced with community-level environment
+exchanges. Cross-feeding and competition are therefore constraints inside one
+joint optimization problem.
+
+The dependency is pinned to OpenCOBRA/cobrapy commit
+`327e9b6a744db452862b70f848e7818dca22641d` so installations use the reviewed
+upstream implementation reproducibly.
+
+```python
+from n2bio.fba import (
+    build_community_model,
+    load_sbml_organism,
+    solve_community,
+)
+
+diazotroph = load_sbml_organism(
+    "models/diazotroph.xml",
+    organism_id="diazotroph",
+    biomass_reaction="BIOMASS_DIAZO",
+)
+methanogen = load_sbml_organism(
+    "models/methanogen.xml",
+    organism_id="methanogen",
+    biomass_reaction="BIOMASS_METH",
+)
+
+community = build_community_model(
+    [diazotroph, methanogen],
+    metabolite_mapping={
+        "h2_e": "h2",
+        "co2_e": "co2",
+        "ch4_e": "ch4",
+    },
+    medium={
+        "h2": (-10.0, 1000.0),
+        "co2": (-10.0, 1000.0),
+        "ch4": (0.0, 1000.0),
+    },
+    minimum_growth={"diazotroph": 0.01, "methanogen": 0.01},
+)
+solution = solve_community(community)
+```
+
+`fixed_abundances` adds SteadyCom-style biomass-contribution ratios. The
+`solve_cooperative_tradeoff` helper retains a requested fraction of maximum
+community productivity and then maximizes the weakest member. For changing
+extracellular pools, `simulate_dynamic_community` performs finite-pool dynamic
+FBA with biomass updates for a fixed-composition community.
+
+Grassmann and SPD analysis should use declared shared coordinates. The SBML
+API provides `aligned_exchange_flux_matrix` and `aligned_flux_covariance` for
+repeated solutions in a caller-specified metabolite order.
+
+### Reduced four-guild demonstration
 
 The `fba` subpackage adds constraint-based stoichiometric modelling of the full
-four-guild consortium on three Riemannian manifolds, complementing the kinetic
-ODE model with steady-state flux analysis.
+four-guild reduced model on three Riemannian manifolds, complementing the
+kinetic ODE model with steady-state flux analysis.
 
 ### Geometric enhancements over standard LP-FBA
 
@@ -144,7 +209,7 @@ ODE model with steady-state flux analysis.
 |---|---|
 | **Grassmann Gr(k, n)** | Each guild's null space is a point on Gr(k, n). Geodesic distance between guilds quantifies metabolic complementarity. The lifecycle trajectory is a geodesic path across phases. |
 | **Stiefel V_{n,k}** | Orthonormal null-space bases live on V_{n,k}. Riemannian gradient descent stays in null(S) exactly — no LP re-projection needed. |
-| **SPD Sym⁺(n)** | Flux covariance lives on Sym⁺(n). Fisher-Rao metric enables principled cross-guild comparison and anisotropic sampling. |
+| **SPD Sym⁺(n)** | Regularized exchange-flux second moments live on Sym⁺(n). Repeated aligned samples support covariance analysis. |
 
 ### Guilds and exchange metabolites
 

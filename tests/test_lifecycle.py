@@ -380,12 +380,14 @@ def test_biological_state_P_H2_atm():
 
 
 def test_biological_state_as_array():
-    """BiologicalState.as_array() should return length-7 array."""
+    """BiologicalState.as_array() should include sulfur intermediates."""
     state = make_state()
     arr = state.as_array()
-    assert len(arr) == 7
+    assert len(arr) == 11
     assert arr[0] == state.N2_aq
     assert arr[5] == state.X
+    assert arr[7] == state.H2S_aq
+    assert arr[10] == state.Cys_aq
 
 
 # ===========================================================================

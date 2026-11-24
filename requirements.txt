@@ -2,4 +2,5 @@ numpy>=1.24
 scipy>=1.10
 matplotlib>=3.7
 cvxpy>=1.4
+cobra @ git+https://github.com/opencobra/cobrapy.git@327e9b6a744db452862b70f848e7818dca22641d
 dataclasses; python_version<"3.7"

@@ -9,8 +9,8 @@ consortium on three Riemannian manifolds:
   guilds measures metabolic complementarity.
 * **Stiefel V_{n,k}** — orthonormal null-space bases; Riemannian gradient
   descent stays in null(S) exactly.
-* **SPD Sym+(n)** — flux covariance manifold; Fisher-Rao metric for
-  principled cross-guild comparison.
+* **SPD Sym+(n)** — aligned exchange-flux second moments; Fisher-Rao metric
+  for cross-guild comparison.
 
 Guilds
 ------
@@ -81,6 +81,20 @@ from .manifold_fba import (
 )
 
 from .bridge import state_to_community
+from .community import (
+    CommunityModel,
+    CommunitySolution,
+    DynamicCommunityResult,
+    LoadedOrganism,
+    OrganismModelInfo,
+    aligned_exchange_flux_matrix,
+    aligned_flux_covariance,
+    build_community_model,
+    load_sbml_organism,
+    simulate_dynamic_community,
+    solve_community,
+    solve_cooperative_tradeoff,
+)
 
 __all__ = [
     # Data structures
@@ -118,4 +132,17 @@ __all__ = [
     "N_EXCH",
     # Bridge
     "state_to_community",
+    # SBML community modelling
+    "OrganismModelInfo",
+    "LoadedOrganism",
+    "CommunityModel",
+    "CommunitySolution",
+    "DynamicCommunityResult",
+    "load_sbml_organism",
+    "build_community_model",
+    "solve_community",
+    "solve_cooperative_tradeoff",
+    "simulate_dynamic_community",
+    "aligned_exchange_flux_matrix",
+    "aligned_flux_covariance",
 ]

@@ -197,6 +197,43 @@ Grassmann and SPD analysis should use declared shared coordinates. The SBML
 API provides `aligned_exchange_flux_matrix` and `aligned_flux_covariance` for
 repeated solutions in a caller-specified metabolite order.
 
+### Reservoir-cell coupling
+
+`cell.py` loads SBML-FBC or COBRA JSON members from a JSON manifest. Each
+reservoir solute is mapped to an exact organism exchange reaction. Unmapped
+substrates remain closed. A cell step constrains joint community uptake by the
+available mol/L inventory, permits same-step cross-feeding, and returns signed
+solute rates in mol/L/hour. Mobile and attached biomass are tracked separately
+in gDW/L while both contribute to the cell's fixed composition.
+
+```python
+from n2bio.fba import (
+    ReservoirCellState,
+    load_configured_organisms,
+    load_species_manifest,
+    solve_reservoir_cell,
+)
+
+species = load_species_manifest("models/species.json")
+organisms = load_configured_organisms(species)
+state = ReservoirCellState(
+    solutes={"glucose": 0.002, "acetate": 0.0},
+    mobile_biomass={"producer": 0.03, "consumer": 0.04},
+    attached_biomass={"producer": 0.02, "consumer": 0.01},
+    temperature_c=35.0,
+    ph=7.2,
+    total_ammonia_n=0.01,
+)
+result = solve_reservoir_cell(species, organisms, state, dt_hours=0.25)
+state = result.state
+```
+
+The manifest requires `organism_id`, `model_path`, `biomass_reaction`, and an
+`exchanges` object mapping canonical reservoir names to exact reaction IDs.
+Optional `cardinal_temperatures_c` and `ammonia_response` fields activate
+temperature selection and NH3-dependent ATP-maintenance or MCR bounds. These
+adjustments are clipped to each source model's native reaction bounds.
+
 ### Reduced four-guild demonstration
 
 The `fba` subpackage adds constraint-based stoichiometric modelling of the full

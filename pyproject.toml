@@ -37,6 +37,7 @@ dependencies = [
     "scipy>=1.10",
     "matplotlib>=3.7",
     "cvxpy>=1.4",
+    "cobra @ git+https://github.com/opencobra/cobrapy.git@327e9b6a744db452862b70f848e7818dca22641d",
 ]
 
 [project.optional-dependencies]
@@ -53,12 +54,18 @@ io = [
     "openpyxl>=3.1",
     "pyyaml>=6.0",
 ]
+community = [
+    "cobra @ git+https://github.com/opencobra/cobrapy.git@327e9b6a744db452862b70f848e7818dca22641d",
+    "python-libsbml>=5.20",
+]
 all = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "python-multipart>=0.0.9",
     "openpyxl>=3.1",
     "pyyaml>=6.0",
+    "cobra @ git+https://github.com/opencobra/cobrapy.git@327e9b6a744db452862b70f848e7818dca22641d",
+    "python-libsbml>=5.20",
 ]
 
 [tool.setuptools.packages.find]

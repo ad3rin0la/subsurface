@@ -15,8 +15,8 @@ Three geometric enhancements over standard LP-based FBA:
      descent stays in null(S) exactly — no re-projection needed.
 
   3. SPD manifold Sym+(n)
-     Flux covariance lives on Sym+(n). The Fisher-Rao metric enables
-     principled cross-guild comparison and anisotropic sampling.
+     Regularized exchange-flux second moments live on Sym+(n). Repeated
+     solution samples can be converted to covariance matrices separately.
 
 Guilds
 ------
@@ -36,7 +36,7 @@ branches. Parallel branches between the same source → sink create
 stoichiometric dependencies: n_rxn > rank(S), so null_dim = n_rxn - rank > 0.
 This mirrors real GEMs which have thousands of reactions vs hundreds of mets.
 
-Dependencies: numpy, scipy, cvxpy, pymanopt
+Dependencies: numpy, scipy, cvxpy
 """
 
 from __future__ import annotations
@@ -46,7 +46,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import null_space, svd
 import cvxpy as cp
-from scipy.optimize import minimize
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +475,7 @@ def grassmann_geodesic(W0: np.ndarray, W1: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
-# 5.  SPD manifold (Fisher-Rao metric on flux covariance)
+# 5.  SPD manifold (Fisher-Rao metric)
 # ---------------------------------------------------------------------------
 
 def spd_distance(A: np.ndarray, B: np.ndarray) -> float:
@@ -602,9 +601,9 @@ def run_manifold_fba(guild: GuildModel,
     Strategy
     --------
     1. Compute orthonormal null basis W  (Stiefel manifold point).
-    2. Any feasible flux: v = W @ alpha + v_p  (v_p = bound-midpoint projection).
-    3. Maximise c·v s.t. lb ≤ v ≤ ub via log-barrier penalty on alpha.
-    4. The optimisation stays in null(S) exactly — no LP re-projection.
+    2. Parameterise every steady-state flux as v = W @ alpha.
+    3. Maximise c·v with hard reaction and exchange constraints.
+    4. The optimisation stays in null(S) exactly.
 
     The Stiefel/Grassmann manifold enters through W; alpha lives in R^k (flat).
     For community problems, W itself can be updated on the Grassmann manifold
@@ -618,80 +617,39 @@ def run_manifold_fba(guild: GuildModel,
 
     k = W.shape[1]
 
-    # Particular solution: project bound midpoint onto null(S_int)
-    v_mid = 0.5 * (guild.lb + guild.ub)
-    St = S_int.T
-    v_p = v_mid - St @ np.linalg.lstsq(
-        S_int @ St + 1e-10 * np.eye(S_int.shape[0]),
-        S_int @ v_mid, rcond=None)[0]
-
-    # Adjust v_p to strictly satisfy bounds (clamp then re-project slightly)
-    v_p = np.clip(v_p, guild.lb + 1e-4, guild.ub - 1e-4)
-
-    obj_coef = W.T @ guild.c  # gradient of objective in alpha-space
-
-    # Exchange flux constraints expressed in alpha-space
-    exc_A = []  # rows: exchange constraint normals in alpha-space
-    exc_lo = []
-    exc_hi = []
+    alpha = cp.Variable(k)
+    v = W @ alpha
+    constraints = [v >= guild.lb, v <= guild.ub]
     if exchange_bounds:
         for met_name, (lo, hi) in exchange_bounds.items():
             if met_name not in EXCHANGE_METABOLITES:
                 continue
             row = guild.S_exchange[EXCHANGE_METABOLITES[met_name], :]
-            # net_flux = row @ (W @ alpha + v_p) = (row @ W) @ alpha + row @ v_p
-            a_row = row @ W
-            offset = float(row @ v_p)
-            exc_A.append(a_row)
-            exc_lo.append(lo - offset if np.isfinite(lo) else -np.inf)
-            exc_hi.append(hi - offset if np.isfinite(hi) else +np.inf)
+            net = row @ v
+            if np.isfinite(lo):
+                constraints.append(net >= lo)
+            if np.isfinite(hi):
+                constraints.append(net <= hi)
 
-    MU = 0.05  # log-barrier weight
+    problem = cp.Problem(cp.Maximize(guild.c @ v), constraints)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem.solve(solver=cp.CLARABEL, max_iter=max_iter, verbose=False)
 
-    def neg_obj(alpha):
-        v = W @ alpha + v_p
-        margin_lb = v - guild.lb
-        margin_ub = guild.ub - v
-        if np.any(margin_lb <= 0) or np.any(margin_ub <= 0):
-            return 1e12
-        barrier = -MU * (np.sum(np.log(margin_lb)) + np.sum(np.log(margin_ub)))
-        # Exchange constraint penalties
-        exc_pen = 0.0
-        for a_row, lo, hi in zip(exc_A, exc_lo, exc_hi):
-            val = float(a_row @ alpha)
-            if np.isfinite(lo) and val <= lo:
-                exc_pen += 1e4 * (lo - val) ** 2
-            if np.isfinite(hi) and val >= hi:
-                exc_pen += 1e4 * (val - hi) ** 2
-        return -(obj_coef @ alpha) + barrier + exc_pen
-
-    def grad_neg_obj(alpha):
-        v = W @ alpha + v_p
-        margin_lb = v - guild.lb
-        margin_ub = guild.ub - v
-        if np.any(margin_lb <= 0) or np.any(margin_ub <= 0):
-            return np.zeros(k)
-        d_barrier = -MU * (1.0 / margin_lb - 1.0 / margin_ub)
-        g = -obj_coef + W.T @ d_barrier
-        for a_row, lo, hi in zip(exc_A, exc_lo, exc_hi):
-            val = float(a_row @ alpha)
-            if np.isfinite(lo) and val <= lo:
-                g += -2e4 * (lo - val) * a_row
-            if np.isfinite(hi) and val >= hi:
-                g += 2e4 * (val - hi) * a_row
-        return g
-
-    res = minimize(neg_obj, np.zeros(k), jac=grad_neg_obj, method="L-BFGS-B",
-                   options={"maxiter": max_iter, "ftol": 1e-12, "gtol": 1e-8})
-
-    alpha_opt = res.x
-    v_opt = np.clip(W @ alpha_opt + v_p, guild.lb, guild.ub)
+    if problem.status in ("optimal", "optimal_inaccurate") and alpha.value is not None:
+        alpha_opt = np.asarray(alpha.value, dtype=float)
+        v_opt = np.asarray(W @ alpha_opt, dtype=float)
+        status = "manifold_optimal"
+    else:
+        alpha_opt = np.zeros(k)
+        v_opt = np.zeros(guild.n_rxn)
+        status = f"manifold_{problem.status or 'unknown'}"
 
     return FBAResult(
         guild_name=guild.name,
         objective=float(guild.c @ v_opt),
         fluxes=v_opt,
-        status="manifold_optimal" if res.success else "manifold_suboptimal",
+        status=status,
         null_basis=W,
         null_dim=k,
         null_coords=alpha_opt,
@@ -804,8 +762,9 @@ def run_community_fba(state: CommunityState,
 
     1. Solve per-guild FBA (manifold or standard LP).
     2. Compute biomass-weighted community exchange fluxes.
-    3. Compute pairwise Grassmann distances via exchange-space projection.
-    4. Optionally compute SPD Fisher-Rao distances between flux covariances.
+    3. Compute pairwise Grassmann distances in the shared exchange basis.
+    4. Optionally compute SPD Fisher-Rao distances between aligned exchange
+       flux second-moment matrices.
     5. Optionally compute geodesic trajectory between diazotroph and
        hydrogenotroph null spaces (lifecycle proxy).
     """
@@ -831,11 +790,8 @@ def run_community_fba(state: CommunityState,
     H2S_flux     = sum(net(i, "H2S")    for i in range(4))
     acetate_flux = sum(net(i, "acetate") for i in range(4))
 
-    # -- Null bases in reaction space (from internal-row null space) --
-    # Each guild has different n_rxn; we pad to max_rxn for cross-guild comparison.
-    max_rxn = max(g.n_rxn for g in guilds)
+    # -- Null bases for per-guild diagnostics --
     null_bases_rxn = []
-    null_bases_padded = []   # padded to max_rxn for Grassmann distance
     null_dims = np.zeros(4, dtype=int)
 
     for i, (g, r) in enumerate(zip(guilds, results)):
@@ -850,29 +806,34 @@ def run_community_fba(state: CommunityState,
         null_bases_rxn.append(W_rxn)
         null_dims[i] = W_rxn.shape[1]
 
-        # Pad to max_rxn and re-orthonormalise
-        pad = np.zeros((max_rxn - g.n_rxn, W_rxn.shape[1]))
-        W_pad = np.vstack([W_rxn, pad])
-        Q, _ = np.linalg.qr(W_pad)
-        null_bases_padded.append(Q[:, :W_rxn.shape[1]])
+    # Compare guilds only in the biologically aligned exchange-metabolite basis.
+    exchange_vectors = [g.S_exchange @ r.fluxes for g, r in zip(guilds, results)]
+    exchange_bases = []
+    for vector in exchange_vectors:
+        norm = np.linalg.norm(vector)
+        if norm <= 1e-12:
+            exchange_bases.append(np.eye(N_EXCH, 1))
+        else:
+            exchange_bases.append((vector / norm).reshape(-1, 1))
 
-    # -- Pairwise Grassmann distances in padded reaction space --
+    # -- Pairwise Grassmann distances in shared exchange space --
     G_dist = np.zeros((4, 4))
     for i in range(4):
         for j in range(i + 1, 4):
             try:
-                d = grassmann_distance(null_bases_padded[i], null_bases_padded[j])
+                d = grassmann_distance(exchange_bases[i], exchange_bases[j])
             except Exception:
                 d = np.nan
             G_dist[i, j] = G_dist[j, i] = d
 
-    # -- SPD distances between flux covariance matrices --
+    # -- SPD distances between aligned exchange second-moment matrices --
     spd_dist = None
     if compute_spd:
-        # Build SPD covariance in exchange space for each guild
+        # A regularized second-moment matrix in the same exchange coordinates.
+        # Multi-sample covariance is available through aligned_flux_covariance
+        # in n2bio.fba.community.
         cov_mats = []
-        for i, (g, r) in enumerate(zip(guilds, results)):
-            v_exc = g.S_exchange @ r.fluxes
+        for v_exc in exchange_vectors:
             cov = np.outer(v_exc, v_exc) + 1e-4 * np.eye(N_EXCH)
             cov_mats.append(cov)
         spd_dist = np.zeros((4, 4))
@@ -889,7 +850,7 @@ def run_community_fba(state: CommunityState,
     if track_geodesic:
         try:
             geo_traj = grassmann_geodesic(
-                null_bases_padded[0], null_bases_padded[1],
+                exchange_bases[0], exchange_bases[1],
                 n_points=n_geodesic_points)
         except Exception:
             geo_traj = None
@@ -1028,7 +989,7 @@ def print_community_report(result: CommunityFBAResult,
     print(f"    acetate net  : {result.community_acetate_flux:>+10.5f}  ← fermentation coproduct")
 
     G = result.grassmann_distances
-    print(f"\n  Grassmann distances  (null-space geodesics in exchange space, rad):")
+    print(f"\n  Grassmann distances  (aligned exchange-flux directions, rad):")
     hdr = "                    " + "".join(f"  {n[:8]:>10}" for n in GUILD_NAMES)
     print("  " + hdr)
     for i, name in enumerate(GUILD_NAMES):
@@ -1040,7 +1001,7 @@ def print_community_report(result: CommunityFBAResult,
 
     if result.spd_distances is not None:
         SPD = result.spd_distances
-        print(f"\n  Fisher-Rao (SPD) distances  (flux covariance, Sym+(9)):")
+        print(f"\n  Fisher-Rao (SPD) distances  (exchange second moments, Sym+(10)):")
         print("  " + hdr)
         for i, name in enumerate(GUILD_NAMES):
             row = f"  {name:<20}"

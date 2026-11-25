@@ -90,10 +90,21 @@ from .community import (
     aligned_exchange_flux_matrix,
     aligned_flux_covariance,
     build_community_model,
+    load_organism,
     load_sbml_organism,
     simulate_dynamic_community,
     solve_community,
     solve_cooperative_tradeoff,
+)
+from .cell import (
+    AmmoniaResponse,
+    ReservoirCellResult,
+    ReservoirCellState,
+    SpeciesConfig,
+    cardinal_temperature_fitness,
+    load_configured_organisms,
+    load_species_manifest,
+    solve_reservoir_cell,
 )
 
 __all__ = [
@@ -138,6 +149,7 @@ __all__ = [
     "CommunityModel",
     "CommunitySolution",
     "DynamicCommunityResult",
+    "load_organism",
     "load_sbml_organism",
     "build_community_model",
     "solve_community",
@@ -145,4 +157,13 @@ __all__ = [
     "simulate_dynamic_community",
     "aligned_exchange_flux_matrix",
     "aligned_flux_covariance",
+    # Reservoir-cell coupling
+    "AmmoniaResponse",
+    "SpeciesConfig",
+    "ReservoirCellState",
+    "ReservoirCellResult",
+    "cardinal_temperature_fitness",
+    "load_species_manifest",
+    "load_configured_organisms",
+    "solve_reservoir_cell",
 ]

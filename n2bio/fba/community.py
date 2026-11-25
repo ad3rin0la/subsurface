@@ -152,12 +152,35 @@ def load_sbml_organism(
     validate: bool = True,
 ) -> LoadedOrganism:
     """Load one SBML-FBC model and retain its modelling metadata."""
+    return load_organism(
+        path,
+        organism_id=organism_id,
+        biomass_reaction=biomass_reaction,
+        validate=validate,
+        model_format="sbml",
+    )
+
+
+def load_organism(
+    path: Union[str, Path],
+    organism_id: Optional[str] = None,
+    biomass_reaction: Optional[str] = None,
+    validate: bool = True,
+    model_format: Optional[str] = None,
+) -> LoadedOrganism:
+    """Load an SBML-FBC or COBRA JSON model and retain its metadata."""
     cobra = _cobra()
     source = Path(path).expanduser().resolve()
     if not source.is_file():
         raise FileNotFoundError(source)
 
-    if validate:
+    detected_format = (model_format or source.suffix.lstrip(".")).lower()
+    if detected_format == "json":
+        model = cobra.io.load_json_model(str(source))
+        warnings = []
+    elif detected_format not in {"sbml", "xml"}:
+        raise ValueError("model_format must be 'sbml', 'xml', or 'json'")
+    elif validate:
         model, validation = cobra.io.validate_sbml_model(str(source))
         if model is None:
             fatal_messages = validation.get("SBML_FATAL", []) + validation.get(
@@ -189,7 +212,8 @@ def load_sbml_organism(
         )
 
     flux_units = model.notes.get("flux_units") if hasattr(model, "notes") else None
-    flux_units = flux_units or _sbml_flux_units(source)
+    if detected_format != "json":
+        flux_units = flux_units or _sbml_flux_units(source)
     info = OrganismModelInfo(
         organism_id=org_id,
         model_id=model.id or source.stem,
